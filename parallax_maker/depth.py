@@ -11,7 +11,7 @@ TODO:
 """
 
 
-from transformers import AutoImageProcessor, DPTForDepthEstimation
+from transformers import AutoImageProcessor, DPTForDepthEstimation, AutoModelForDepthEstimation
 import torch
 import cv2
 import numpy as np
@@ -21,7 +21,7 @@ from .utils import torch_get_device
 
 
 class DepthEstimationModel:
-    MODELS = ["midas", "zoedepth", "dinov2"]
+    MODELS = ["depth_anything_v2", "midas", "zoedepth", "dinov2"]
 
     def __init__(self, model="midas"):
         assert model in self.MODELS, f"Model {model} must be one of {self.MODELS}"
@@ -41,6 +41,7 @@ class DepthEstimationModel:
 
     def load_model(self, progress_callback=None):
         load_pipeline = {
+            "depth_anything_v2": create_depth_anything_v2_pipeline,
             "midas": create_medias_pipeline,
             "zoedepth": create_zoedepth_pipeline,
             "dinov2": create_dinov2_pipeline,
@@ -54,12 +55,17 @@ class DepthEstimationModel:
             self.model = result
         elif self._model_name == "dinov2":
             self.model, self.image_processor = result
+        elif self._model_name == "depth_anything_v2":
+            self.model, self.image_processor = result
 
     def depth_map(self, image, progress_callback=None):
         if self.model is None:
             self.load_model()
 
         run_pipeline = {
+            "depth_anything_v2": lambda img, cb: run_depth_anything_v2_pipeline(
+                img, self.model, self.image_processor, progress_callback=cb
+            ),
             "midas": lambda img, cb: run_medias_pipeline(
                 img, self.model, self.transforms, progress_callback=cb
             ),
@@ -73,6 +79,105 @@ class DepthEstimationModel:
 
         return run_pipeline[self._model_name](image, progress_callback)
 
+
+# =============================================================================
+# Depth Anything V2 - State of the art (2025)
+# =============================================================================
+
+def create_depth_anything_v2_pipeline(progress_callback=None):
+    """
+    Creates Depth Anything V2 pipeline - 10x faster than diffusion-based models
+    with better accuracy. Available in Small (25M), Base (98M), Large (335M).
+    """
+    # Clear GPU memory before loading model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    if progress_callback:
+        progress_callback(10, 100)
+
+    # Using Large model for best quality - can switch to Base or Small for speed
+    model_id = "depth-anything/Depth-Anything-V2-Large-hf"
+
+    image_processor = AutoImageProcessor.from_pretrained(model_id)
+
+    if progress_callback:
+        progress_callback(30, 100)
+
+    model = AutoModelForDepthEstimation.from_pretrained(model_id)
+    model.to(torch_get_device())
+    model.eval()
+
+    if progress_callback:
+        progress_callback(50, 100)
+
+    return model, image_processor
+
+
+def run_depth_anything_v2_pipeline(image, model, image_processor, progress_callback=None):
+    """
+    Runs Depth Anything V2 inference - optimized for speed and quality.
+    """
+    # Clear GPU cache to free up memory before running inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # Convert numpy array to PIL Image if needed
+    if isinstance(image, np.ndarray):
+        image = Image.fromarray(image)
+
+    image = image.convert("RGB")
+    original_size = image.size  # (width, height)
+
+    if progress_callback:
+        progress_callback(60, 100)
+
+    # Prepare inputs
+    inputs = image_processor(images=image, return_tensors="pt")
+    inputs = {k: v.to(torch_get_device()) for k, v in inputs.items()}
+
+    if progress_callback:
+        progress_callback(70, 100)
+
+    # Run inference
+    with torch.no_grad():
+        outputs = model(**inputs)
+        predicted_depth = outputs.predicted_depth
+
+    if progress_callback:
+        progress_callback(85, 100)
+
+    # Interpolate to original size
+    prediction = torch.nn.functional.interpolate(
+        predicted_depth.unsqueeze(1),
+        size=(original_size[1], original_size[0]),  # (height, width)
+        mode="bicubic",
+        align_corners=False,
+    )
+
+    # Convert to numpy and normalize
+    output = prediction.squeeze().cpu().numpy()
+
+    # Normalize to 0-255 range
+    output = (output - output.min()) / (output.max() - output.min() + 1e-8)
+    formatted = (output * 255).astype("uint8")
+
+    # Invert so that far = black, near = white (matching other models)
+    formatted = 255 - formatted
+
+    if progress_callback:
+        progress_callback(100, 100)
+
+    # Free GPU memory after inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return formatted
+
+
+# =============================================================================
+# DINOv2 (Legacy)
+# =============================================================================
 
 def create_dinov2_pipeline(progress_callback=None):
     # Clear GPU memory before loading model

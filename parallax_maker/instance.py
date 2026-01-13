@@ -2,14 +2,12 @@
 #
 """
 Provides instance segmentation functionality using pre-trained deep learning models.
-Segment Anything seems superior to Mask2Former.
+Segment Anything 2 is the recommended model for best performance.
 
-Supports two models:
+Supports models:
+- SAM 2: https://github.com/facebookresearch/sam2 (Recommended - 6x faster, better accuracy)
+- SAM: https://huggingface.co/facebook/sam-vit-huge (Legacy)
 - Mask2Former: https://huggingface.co/facebook/mask2former-swin-large-coco-instance
-- SAM: https://huggingface.co/facebook/sam-vit-huge
-
-Todo:
- - Create support for HQ-SAM: https://github.com/SysCV/sam-hq?tab=readme-ov-file
 """
 
 from PIL import Image
@@ -24,11 +22,20 @@ import numpy as np
 
 from .utils import torch_get_device, image_overlay, draw_circle
 
+# Try to import SAM 2 - it's optional
+SAM2_AVAILABLE = False
+try:
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    SAM2_AVAILABLE = True
+except ImportError:
+    pass
+
 
 class SegmentationModel:
-    MODELS = ["mask2former", "sam"]
+    MODELS = ["sam2", "sam", "mask2former"] if SAM2_AVAILABLE else ["sam", "mask2former"]
 
-    def __init__(self, model="sam"):
+    def __init__(self, model="sam2" if SAM2_AVAILABLE else "sam"):
         assert model in self.MODELS
         self.model_name = model
         self.model = None
@@ -45,6 +52,7 @@ class SegmentationModel:
         load_model = {
             "mask2former": self.load_mask2former_model,
             "sam": self.load_sam_model,
+            "sam2": self.load_sam2_model,
         }
 
         result = load_model[self.model_name]()
@@ -53,6 +61,8 @@ class SegmentationModel:
             self.model, self.image_processor = result
         elif self.model_name == "sam":
             self.model, self.image_processor = result
+        elif self.model_name == "sam2":
+            self.model = result  # SAM2 uses predictor directly
 
     @staticmethod
     def load_mask2former_model():
@@ -71,6 +81,35 @@ class SegmentationModel:
         processor = SamProcessor.from_pretrained("facebook/sam-vit-huge")
         return model, processor
 
+    @staticmethod
+    def load_sam2_model():
+        """
+        Load SAM 2 model - 6x faster than SAM with better accuracy.
+        Uses the large model by default for best quality.
+        """
+        if not SAM2_AVAILABLE:
+            raise ImportError("SAM 2 is not installed. Install with: pip install sam2")
+
+        # Clear GPU memory before loading
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        device = torch_get_device()
+
+        # SAM 2 model configurations (from smallest to largest):
+        # - sam2_hiera_tiny (38.9M params) - fastest
+        # - sam2_hiera_small (46M params)
+        # - sam2_hiera_base_plus (80.8M params)
+        # - sam2_hiera_large (224.4M params) - best quality
+        model_cfg = "sam2_hiera_large"
+        checkpoint = "facebook/sam2-hiera-large"
+
+        # Build SAM2 model
+        sam2_model = build_sam2(model_cfg, checkpoint, device=device)
+        predictor = SAM2ImagePredictor(sam2_model)
+
+        return predictor
+
     def segment_image(self, image):
         self.image = image
         if isinstance(image, np.ndarray):
@@ -80,19 +119,21 @@ class SegmentationModel:
         run_pipeline = {
             "mask2former": self.segment_image_mask2former,
             "sam": self.segment_image_sam,
+            "sam2": self.segment_image_sam2,
         }
 
         self.mask = run_pipeline[self.model_name]()
         return self.mask
 
     def _get_mask_at_point_function(self):
-        needs_mask = {"mask2former": True, "sam": False}
-        if needs_mask[self.model_name] and self.mask is None:
+        needs_mask = {"mask2former": True, "sam": False, "sam2": False}
+        if needs_mask.get(self.model_name, False) and self.mask is None:
             return None
 
         run_pipeline = {
             "mask2former": self.mask_at_point_mask2former,
             "sam": self.mask_at_point_sam,
+            "sam2": self.mask_at_point_sam2,
         }
         return run_pipeline[self.model_name]
 
@@ -178,6 +219,72 @@ class SegmentationModel:
     def segment_image_sam(self):
         # this is a no-op for sam as the model needs to be guided by an input point
         return None
+
+    def segment_image_sam2(self):
+        """SAM 2 also needs point guidance, so this just sets up the image."""
+        if self.model is None:
+            self.load_model()
+
+        # Convert PIL Image to numpy array for SAM 2
+        image_np = np.array(self.image)
+
+        # Set the image in the predictor
+        self.model.set_image(image_np)
+        return None
+
+    def mask_at_point_sam2(self, point_input):
+        """
+        Generate mask using SAM 2 with point prompts.
+
+        SAM 2 is 6x faster than SAM with better accuracy.
+        """
+        positive_points = []
+        negative_points = []
+
+        if isinstance(point_input, tuple):
+            positive_points = [point_input]
+        elif isinstance(point_input, list) and all(isinstance(item, tuple) for item in point_input):
+            positive_points = point_input
+        elif isinstance(point_input, dict) and "positive_points" in point_input:
+            positive_points = point_input["positive_points"]
+            negative_points = point_input.get("negative_points", [])
+        else:
+            raise ValueError("Invalid input for mask_at_point_sam2 function.")
+
+        return self._mask_at_point_sam2(positive_points, negative_points)
+
+    def _mask_at_point_sam2(self, positive_points, negative_points):
+        """Internal SAM 2 mask prediction."""
+        if self.model is None:
+            self.load_model()
+            # Set image if not already set
+            image_np = np.array(self.image)
+            self.model.set_image(image_np)
+
+        # Prepare point coordinates and labels
+        all_points = positive_points + negative_points
+        point_coords = np.array(all_points, dtype=np.float32)
+        point_labels = np.array(
+            [1] * len(positive_points) + [0] * len(negative_points),
+            dtype=np.int32
+        )
+
+        # Run SAM 2 prediction
+        with torch.no_grad():
+            masks, scores, _ = self.model.predict(
+                point_coords=point_coords,
+                point_labels=point_labels,
+                multimask_output=True,  # Get multiple mask predictions
+            )
+
+        # Select best mask based on score
+        best_idx = np.argmax(scores)
+        mask = masks[best_idx]
+
+        # Convert to uint8 format (0 or 255)
+        mask_image = (mask * 255).astype(np.uint8)
+
+        return mask_image
 
     def mask_at_point_sam(self, point_input):
         """

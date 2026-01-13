@@ -332,10 +332,11 @@ def make_depth_map_container(depth_map_id: str = C.CTR_DEPTH_MAP):
                             dcc.Dropdown(
                                 id=C.DROPDOWN_DEPTH_MODEL,
                                 options=[
+                                    {"label": "Depth Anything V2 (Recommended)", "value": "depth_anything_v2"},
                                     {"label": "MiDaS", "value": "midas"},
                                     {"label": "DINOv2", "value": "dinov2"},
                                 ],
-                                value="dinov2",
+                                value="depth_anything_v2",
                                 className="general-dropdown mt-2 mb-2",
                             ),
                         ],
@@ -1218,12 +1219,8 @@ def make_configuration_div():
                         id=C.DROPDOWN_INPAINT_MODEL,
                         options=[
                             {
-                                "label": "Kadinksy",
-                                "value": "kandinsky-community/kandinsky-2-2-decoder-inpaint",
-                            },
-                            {
-                                "label": "SD 1.5",
-                                "value": "runwayml/stable-diffusion-v1-5",
+                                "label": "FLUX.1 Fill (Recommended - 24GB VRAM)",
+                                "value": "black-forest-labs/FLUX.1-Fill-dev",
                             },
                             {
                                 "label": "SD XL 1.0",
@@ -1234,8 +1231,12 @@ def make_configuration_div():
                                 "value": "stabilityai/stable-diffusion-3-medium-diffusers",
                             },
                             {
-                                "label": "FLUX.1 Fill Dev",
-                                "value": "black-forest-labs/FLUX.1-Fill-dev",
+                                "label": "Kandinsky",
+                                "value": "kandinsky-community/kandinsky-2-2-decoder-inpaint",
+                            },
+                            {
+                                "label": "SD 1.5",
+                                "value": "runwayml/stable-diffusion-v1-5",
                             },
                             {"label": "Automatic1111", "value": "automatic1111"},
                             {"label": "ComfyUI", "value": "comfyui"},
