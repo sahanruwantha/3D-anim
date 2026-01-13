@@ -20,6 +20,121 @@ from .stabilityai import StabilityAI
 from .falai import FalAI
 
 
+def expand_mask(mask, expansion_pixels=30):
+    """
+    Aggressively expand mask to ensure full coverage of areas to inpaint.
+
+    Args:
+        mask: PIL Image or numpy array mask
+        expansion_pixels: Number of pixels to expand the mask by
+
+    Returns:
+        Expanded mask as same type as input
+    """
+    was_pil = isinstance(mask, Image.Image)
+    if was_pil:
+        mask = np.array(mask)
+
+    # Use a circular kernel for smoother expansion
+    kernel_size = expansion_pixels * 2 + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    expanded = cv2.dilate(mask, kernel, iterations=1)
+
+    if was_pil:
+        expanded = Image.fromarray(expanded)
+
+    return expanded
+
+
+def fill_black_holes(image, threshold=10):
+    """
+    Detect and fill any remaining black/empty pixels in an RGBA image.
+    Uses content-aware filling by sampling nearby non-black pixels.
+
+    Args:
+        image: PIL RGBA Image
+        threshold: Pixel brightness threshold to consider as "black hole"
+
+    Returns:
+        Image with holes filled
+    """
+    img_array = np.array(image)
+
+    # Find black pixels (RGB all below threshold) that have some alpha
+    rgb = img_array[:, :, :3]
+    alpha = img_array[:, :, 3]
+
+    # Detect black holes: low RGB values but not fully transparent
+    brightness = np.mean(rgb, axis=2)
+    black_mask = (brightness < threshold) & (alpha > 50)
+
+    if not np.any(black_mask):
+        return image
+
+    # Use inpainting to fill the black holes
+    # Convert to BGR for OpenCV
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    hole_mask = black_mask.astype(np.uint8) * 255
+
+    # Dilate the hole mask slightly to ensure we cover edges
+    kernel = np.ones((5, 5), np.uint8)
+    hole_mask = cv2.dilate(hole_mask, kernel, iterations=1)
+
+    # Use OpenCV's inpainting (Telea algorithm - fast and effective)
+    filled_bgr = cv2.inpaint(bgr, hole_mask, inpaintRadius=10, flags=cv2.INPAINT_TELEA)
+
+    # Convert back to RGB
+    filled_rgb = cv2.cvtColor(filled_bgr, cv2.COLOR_BGR2RGB)
+
+    # Blend filled areas back
+    result = img_array.copy()
+    result[:, :, :3] = np.where(
+        black_mask[:, :, np.newaxis],
+        filled_rgb,
+        rgb
+    )
+
+    return Image.fromarray(result)
+
+
+def smooth_edges(image, edge_blur=15):
+    """
+    Smooth the edges between inpainted and original content.
+
+    Args:
+        image: PIL RGBA Image
+        edge_blur: Amount of blur to apply at edges
+
+    Returns:
+        Image with smoother edge transitions
+    """
+    img_array = np.array(image)
+    alpha = img_array[:, :, 3]
+
+    # Find edges in the alpha channel
+    edges = cv2.Canny(alpha, 50, 150)
+
+    # Dilate edges to create a transition zone
+    kernel = np.ones((edge_blur, edge_blur), np.uint8)
+    edge_zone = cv2.dilate(edges, kernel, iterations=1)
+
+    # Apply slight blur to the RGB channels in the edge zone
+    rgb = img_array[:, :, :3]
+    blurred_rgb = cv2.GaussianBlur(rgb, (edge_blur * 2 + 1, edge_blur * 2 + 1), 0)
+
+    # Blend based on edge zone
+    edge_mask = edge_zone.astype(np.float32) / 255.0
+    edge_mask = cv2.GaussianBlur(edge_mask, (edge_blur, edge_blur), 0)
+    edge_mask = edge_mask[:, :, np.newaxis]
+
+    result_rgb = (rgb * (1 - edge_mask * 0.3) + blurred_rgb * edge_mask * 0.3).astype(np.uint8)
+
+    result = img_array.copy()
+    result[:, :, :3] = result_rgb
+
+    return Image.fromarray(result)
+
+
 class InpaintingModel:
     # local models running on the local GPU
     MODELS = [
@@ -184,6 +299,10 @@ class InpaintingModel:
         blur_radius=50,
         crop=False,
         seed=-1,
+        mask_expansion=30,
+        num_passes=1,
+        fill_holes=True,
+        smooth_result=True,
     ):
         """
         Perform inpainting on an image using the specified model.
@@ -200,6 +319,10 @@ class InpaintingModel:
             blur_radius (int, optional): The blur radius for feathering the mask image. Defaults to 50.
             crop (bool, optional): Whether to crop the image after inpainting. Defaults to False.
             seed (int, optional): The seed value for the inpainting process. Defaults to -1.
+            mask_expansion (int, optional): Pixels to expand the mask by to ensure full coverage. Defaults to 30.
+            num_passes (int, optional): Number of inpainting passes for better quality. Defaults to 1.
+            fill_holes (bool, optional): Whether to fill any remaining black holes after inpainting. Defaults to True.
+            smooth_result (bool, optional): Whether to smooth edges between inpainted and original content. Defaults to True.
 
         Returns:
             PIL.Image.Image: The inpainted image.
@@ -219,6 +342,10 @@ class InpaintingModel:
             bounding_box = find_square_bounding_box(mask_image, padding=padding)
             init_image = init_image.crop(bounding_box)
             mask_image = mask_image.crop(bounding_box)
+
+        # Expand mask to ensure full coverage of areas to inpaint
+        if mask_expansion > 0:
+            mask_image = expand_mask(mask_image, expansion_pixels=mask_expansion)
 
         if blur_radius > 0 and self._supports_feathering:
             blurred_mask = feather_mask(mask_image, num_expand=blur_radius)
@@ -317,6 +444,61 @@ class InpaintingModel:
         image.putalpha(blurred_mask)
 
         image = Image.alpha_composite(init_image, image)
+
+        # Multi-pass inpainting: run additional passes to refine the result
+        if num_passes > 1:
+            for pass_num in range(1, num_passes):
+                print(f"Inpainting pass {pass_num + 1}/{num_passes}")
+                # For subsequent passes, use the previous result as init
+                # and reduce strength slightly for refinement
+                pass_strength = strength * (0.8 ** pass_num)  # Reduce strength each pass
+                pass_seed = seed + pass_num if seed != -1 else -1
+
+                # Create a mask for remaining imperfections
+                img_array = np.array(image)
+                rgb = img_array[:, :, :3]
+                brightness = np.mean(rgb, axis=2)
+                # Find dark areas that might need more work
+                refinement_mask = (brightness < 30).astype(np.uint8) * 255
+
+                if np.sum(refinement_mask) < 100:  # Skip if barely any dark areas
+                    break
+
+                refinement_mask = Image.fromarray(refinement_mask)
+                refinement_mask = expand_mask(refinement_mask, expansion_pixels=20)
+                refinement_mask = feather_mask(refinement_mask, num_expand=30)
+
+                # Re-run inpainting on remaining areas
+                resize_init_pass = image.convert("RGB").resize((dimension, dimension)) if dimension else image.convert("RGB")
+                resize_mask_pass = refinement_mask.resize((dimension, dimension)) if dimension else refinement_mask
+
+                try:
+                    if self.model in self.MODELS and self.model != "stabilityai/stable-diffusion-3-medium-diffusers":
+                        if self.model == "black-forest-labs/FLUX.1-Fill-dev":
+                            pass_image = self.inpaint_flux(
+                                resize_init_pass, resize_mask_pass, prompt, negative_prompt,
+                                guidance_scale, num_inference_steps, pass_seed
+                            )
+                        else:
+                            pass_image = self.inpaint_diffusers(
+                                resize_init_pass, resize_mask_pass, prompt, negative_prompt,
+                                pass_strength, guidance_scale, num_inference_steps, pass_seed
+                            )
+                        pass_image = pass_image.resize(image.size, resample=Image.LANCZOS)
+                        pass_image = pass_image.convert("RGBA")
+                        pass_image.putalpha(refinement_mask if isinstance(refinement_mask, Image.Image) else Image.fromarray(refinement_mask))
+                        image = Image.alpha_composite(image, pass_image)
+                except Exception as e:
+                    print(f"Multi-pass refinement failed: {e}")
+                    break
+
+        # Post-processing: fill any remaining black holes
+        if fill_holes:
+            image = fill_black_holes(image, threshold=15)
+
+        # Post-processing: smooth edges between inpainted and original content
+        if smooth_result:
+            image = smooth_edges(image, edge_blur=10)
 
         if crop:
             original_init_image.paste(image, bounding_box[:2])

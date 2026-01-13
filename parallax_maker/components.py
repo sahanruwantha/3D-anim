@@ -729,6 +729,10 @@ def make_inpainting_container_callbacks(app):
         State(C.SLIDER_INPAINT_GUIDANCE, "value"),
         State(C.SLIDER_MASK_PADDING, "value"),
         State(C.SLIDER_MASK_BLUR, "value"),
+        State(C.SLIDER_MASK_EXPANSION, "value"),
+        State(C.SLIDER_INPAINT_PASSES, "value"),
+        State(C.CHECKLIST_FILL_HOLES, "value"),
+        State(C.CHECKLIST_SMOOTH_EDGES, "value"),
         running=[
             (Output(C.BTN_GENERATE_INPAINTING, "disabled"), True, False),
             (Output(C.BTN_FILL_INPAINTING, "disabled"), True, False),
@@ -749,6 +753,10 @@ def make_inpainting_container_callbacks(app):
         guidance_scale,
         padding,
         blur,
+        mask_expansion,
+        num_passes,
+        fill_holes_list,
+        smooth_edges_list,
     ):
         if n_clicks_one is None and n_clicks_two is None and n_clicks_three is None:
             raise PreventUpdate()
@@ -794,6 +802,10 @@ def make_inpainting_container_callbacks(app):
                 # we'll fill everything that does not have an alpha
                 mask = 255 - image[:, :, 3]
 
+            # Convert checklist values to booleans
+            fill_holes = "fill" in (fill_holes_list or [])
+            smooth_result = "smooth" in (smooth_edges_list or [])
+
             def execute(input_image):
                 return pipeline.inpaint(
                     positive_prompt,
@@ -805,6 +817,10 @@ def make_inpainting_container_callbacks(app):
                     blur_radius=blur,
                     padding=padding,
                     crop=True,
+                    mask_expansion=mask_expansion or 30,
+                    num_passes=num_passes or 1,
+                    fill_holes=fill_holes,
+                    smooth_result=smooth_result,
                 )
 
             # patch the image
@@ -1354,6 +1370,40 @@ def make_configuration_div():
                                 step=10,
                                 value=50,
                                 marks={i * 10: str(i * 10) for i in range(21)},
+                            ),
+                            html.Label("Mask Expansion (avoid black edges)"),
+                            dcc.Slider(
+                                id=C.SLIDER_MASK_EXPANSION,
+                                min=0,
+                                max=100,
+                                step=10,
+                                value=30,
+                                marks={i * 10: str(i * 10) for i in range(11)},
+                            ),
+                            html.Label("Inpainting Passes (more = smoother)"),
+                            dcc.Slider(
+                                id=C.SLIDER_INPAINT_PASSES,
+                                min=1,
+                                max=3,
+                                step=1,
+                                value=1,
+                                marks={1: "1", 2: "2", 3: "3"},
+                            ),
+                            html.Div(
+                                [
+                                    dcc.Checklist(
+                                        id=C.CHECKLIST_FILL_HOLES,
+                                        options=[{"label": " Fill Black Holes", "value": "fill"}],
+                                        value=["fill"],
+                                        className="mr-4",
+                                    ),
+                                    dcc.Checklist(
+                                        id=C.CHECKLIST_SMOOTH_EDGES,
+                                        options=[{"label": " Smooth Edges", "value": "smooth"}],
+                                        value=["smooth"],
+                                    ),
+                                ],
+                                className="flex flex-row mt-2",
                             ),
                         ],
                         className="general-border w-full min-h-8",
