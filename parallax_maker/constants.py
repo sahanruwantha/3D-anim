@@ -57,8 +57,26 @@ SLIDER_MAX_DISTANCE = "max-distance-slider"
 SLIDER_FOCAL_LENGTH = "focal-length-slider"
 SLIDER_DISPLACEMENT = "displacement-slider"
 SLIDER_NUM_FRAMES = "number-of-frames-slider"
+SLIDER_ANIMATION_FPS = "animation-fps-slider"
+SLIDER_ANIMATION_INTENSITY = "animation-intensity-slider"
+SLIDER_ANIMATION_QUALITY = "animation-quality-slider"
 
 DROPDOWN_DEPTH_MODEL = "depth-model-dropdown"
+DROPDOWN_ANIMATION_PRESET = "animation-preset-dropdown"
+DROPDOWN_ANIMATION_EASING = "animation-easing-dropdown"
+DROPDOWN_ANIMATION_FORMAT = "animation-format-dropdown"
+
+CTR_QUALITY_SLIDER = "quality-slider-container"
+CTR_EFFECTS_CONTAINER = "effects-container"
+
+# Effects controls
+CHECKLIST_VIGNETTE = "vignette-toggle"
+SLIDER_VIGNETTE_INTENSITY = "vignette-intensity-slider"
+CHECKLIST_CHROMATIC = "chromatic-toggle"
+SLIDER_CHROMATIC_STRENGTH = "chromatic-strength-slider"
+CHECKLIST_GRAIN = "grain-toggle"
+SLIDER_GRAIN_INTENSITY = "grain-intensity-slider"
+
 DROPDOWN_INPAINT_MODEL = "inpainting-model-dropdown"
 DROPDOWN_MODE_SELECTOR = "mode-selector"
 

@@ -75,6 +75,10 @@ class DepthEstimationModel:
 
 
 def create_dinov2_pipeline(progress_callback=None):
+    # Clear GPU memory before loading model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     image_processor = AutoImageProcessor.from_pretrained(
         "facebook/dpt-dinov2-large-nyu"
     )
@@ -84,15 +88,21 @@ def create_dinov2_pipeline(progress_callback=None):
 
 
 def run_dinov2_pipeline(image, model, image_processor, progress_callback=None):
+    # Clear GPU cache to free up memory before running inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     image = Image.fromarray(image)
 
+    # Use 512px max to reduce memory usage (down from 1024)
+    max_size = 512
     new_size = image.size
     if image.width > image.height:
-        if image.width > 1024:
-            new_size = (1024, int(image.height * 1024 / image.width))
+        if image.width > max_size:
+            new_size = (max_size, int(image.height * max_size / image.width))
     else:
-        if image.height > 1024:
-            new_size = (int(image.width * 1024 / image.height), 1024)
+        if image.height > max_size:
+            new_size = (int(image.width * max_size / image.height), max_size)
 
     resized_image = image.convert("RGB").resize(new_size, Image.BICUBIC)
     inputs = image_processor(images=resized_image, return_tensors="pt")
@@ -119,6 +129,10 @@ def run_dinov2_pipeline(image, model, image_processor, progress_callback=None):
         formatted, (image.width, image.height), interpolation=cv2.INTER_CUBIC
     )
 
+    # Free GPU memory after inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     return formatted
 
 
@@ -133,6 +147,10 @@ def create_medias_pipeline(progress_callback=None):
         tuple: A tuple containing the MiDaS model and the transformation pipeline.
 
     """
+    # Clear GPU memory before loading model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     # Load the MiDaS v2.1 model
     model_type = "DPT_Large"
     midas = torch.hub.load("intel-isl/MiDaS", model_type, skip_validation=True)
@@ -174,6 +192,10 @@ def run_medias_pipeline(image, midas, transforms, progress_callback=None):
     Returns:
         numpy.ndarray: The predicted segmentation mask.
     """
+    # Clear GPU cache to free up memory before running inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     input_batch = transforms(image).to(torch_get_device())
     with torch.no_grad():
         prediction = midas(input_batch)
@@ -188,7 +210,13 @@ def run_medias_pipeline(image, midas, transforms, progress_callback=None):
     if progress_callback:
         progress_callback(90, 100)
 
-    return prediction.cpu().numpy()
+    result = prediction.cpu().numpy()
+
+    # Free GPU memory after inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return result
 
 
 def midas_depth_map(image, progress_callback=None):
@@ -208,6 +236,10 @@ def midas_depth_map(image, progress_callback=None):
 
 
 def create_zoedepth_pipeline(progress_callback=None):
+    # Clear GPU memory before loading model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     # Triggers fresh download of MiDaS repo
     torch.hub.help("intel-isl/MiDaS", "DPT_BEiT_L_384", force_reload=True)
 
@@ -227,6 +259,10 @@ def create_zoedepth_pipeline(progress_callback=None):
 
 
 def run_zoedepth_pipeline(image, model_zoe_nk, progress_callback=None):
+    # Clear GPU cache to free up memory before running inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     depth_map = model_zoe_nk.infer_pil(image)  # as numpy
 
     # invert the depth map since we are expecting the farthest objects to be black
@@ -234,6 +270,10 @@ def run_zoedepth_pipeline(image, model_zoe_nk, progress_callback=None):
 
     if progress_callback:
         progress_callback(100, 100)
+
+    # Free GPU memory after inference
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return depth_map
 

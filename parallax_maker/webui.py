@@ -1474,40 +1474,155 @@ def slice_upload(contents, filename, logs):
 
 @app.callback(
     Output(C.LOGS_DATA, "data", allow_duplicate=True),
+    Output(C.DOWNLOAD_ANIMATION, "data"),
     Output(C.ANIMATION_OUTPUT, "children"),
     Input(C.BTN_EXPORT_ANIMATION, "n_clicks"),
     State(C.STORE_APPSTATE_FILENAME, "data"),
+    State(C.DROPDOWN_ANIMATION_PRESET, "value"),
+    State(C.DROPDOWN_ANIMATION_EASING, "value"),
+    State(C.DROPDOWN_ANIMATION_FORMAT, "value"),
     State(C.SLIDER_NUM_FRAMES, "value"),
+    State(C.SLIDER_ANIMATION_FPS, "value"),
+    State(C.SLIDER_ANIMATION_INTENSITY, "value"),
+    State(C.SLIDER_ANIMATION_QUALITY, "value"),
+    State(C.CHECKLIST_VIGNETTE, "value"),
+    State(C.SLIDER_VIGNETTE_INTENSITY, "value"),
+    State(C.CHECKLIST_CHROMATIC, "value"),
+    State(C.SLIDER_CHROMATIC_STRENGTH, "value"),
+    State(C.CHECKLIST_GRAIN, "value"),
+    State(C.SLIDER_GRAIN_INTENSITY, "value"),
     State(C.LOGS_DATA, "data"),
     running=[(Output(C.BTN_EXPORT_ANIMATION, "disabled"), True, False)],
     prevent_initial_call=True,
 )
-def export_animation(n_clicks, filename, num_frames, logs):
+def export_animation(
+    n_clicks,
+    filename,
+    preset,
+    easing,
+    output_format,
+    num_frames,
+    fps,
+    intensity,
+    quality,
+    vignette_enabled,
+    vignette_intensity,
+    chromatic_enabled,
+    chromatic_strength,
+    grain_enabled,
+    grain_intensity,
+    logs
+):
     if n_clicks is None or filename is None:
         raise PreventUpdate()
 
+    from .animation import AnimationPreset, AnimationConfig, AnimationPresetFactory
+    from .easing import EasingType
+    from .effects import EffectsConfig
+    from .video_encoder import (
+        render_animation_to_video,
+        render_animation_to_gif,
+        render_animation_to_sequence,
+    )
+    from pathlib import Path
+
     state = AppState.from_cache(filename)
 
-    camera_distance = state.camera.camera_distance
+    if len(state.image_slices) == 0:
+        logs.append("No image slices available for animation")
+        return logs, no_update, ""
 
-    camera_matrix = state.camera_matrix()
-    card_corners_3d_list = state.get_cards()
-
-    # Render the initial view
-    camera_position = np.array([0, 0, -camera_distance], dtype=np.float32)
-    render_image_sequence(
-        filename,
-        state.image_slices,
-        card_corners_3d_list,
-        camera_matrix,
-        camera_position,
-        push_distance=camera_distance * 0.75,  # XXX - make configurable
+    # Create animation configuration
+    config = AnimationConfig(
+        preset=AnimationPreset(preset),
+        easing=EasingType(easing),
         num_frames=num_frames,
+        fps=fps,
+        intensity=intensity,
+        output_format=output_format,
+        quality=quality,
     )
 
-    logs.append(f"Exported {num_frames} frames to animation")
+    # Create effects configuration
+    effects_config = EffectsConfig(
+        vignette_enabled="enabled" in (vignette_enabled or []),
+        vignette_intensity=vignette_intensity,
+        chromatic_aberration_enabled="enabled" in (chromatic_enabled or []),
+        chromatic_aberration_strength=chromatic_strength,
+        grain_enabled="enabled" in (grain_enabled or []),
+        grain_intensity=grain_intensity,
+    )
 
-    return logs, ""
+    # Get image dimensions
+    height, width = state.image_slices[0].image.shape[:2]
+
+    # Create the animation from preset
+    animation = AnimationPresetFactory.create(
+        preset=config.preset,
+        camera=state.camera,
+        image_width=width,
+        image_height=height,
+        config=config,
+    )
+
+    # Get card corners
+    card_corners_3d_list = state.get_cards()
+
+    # Export based on format
+    output_path = Path(filename)
+
+    # Get depth map for DOF effect if available
+    depth_map = state.depthMapData
+
+    try:
+        if output_format == "mp4":
+            video_path = render_animation_to_video(
+                output_path,
+                state.image_slices,
+                card_corners_3d_list,
+                state.camera,
+                animation,
+                config,
+                progress_callback=progress_callback,
+                effects_config=effects_config,
+                depth_map=depth_map,
+            )
+            logs.append(f"Exported MP4 animation: {video_path}")
+            return logs, dcc.send_file(str(video_path)), ""
+
+        elif output_format == "gif":
+            gif_path = render_animation_to_gif(
+                output_path,
+                state.image_slices,
+                card_corners_3d_list,
+                state.camera,
+                animation,
+                config,
+                progress_callback=progress_callback,
+                effects_config=effects_config,
+                depth_map=depth_map,
+            )
+            logs.append(f"Exported GIF animation: {gif_path}")
+            return logs, dcc.send_file(str(gif_path)), ""
+
+        else:  # png_sequence
+            render_animation_to_sequence(
+                output_path,
+                state.image_slices,
+                card_corners_3d_list,
+                state.camera,
+                animation,
+                config,
+                progress_callback=progress_callback,
+                effects_config=effects_config,
+                depth_map=depth_map,
+            )
+            logs.append(f"Exported {num_frames} frames to {output_path}")
+            return logs, no_update, ""
+
+    except Exception as e:
+        logs.append(f"Animation export failed: {str(e)}")
+        return logs, no_update, ""
 
 
 @app.callback(

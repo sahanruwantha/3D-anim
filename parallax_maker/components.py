@@ -1466,11 +1466,189 @@ def make_3d_export_div():
 def make_animation_export_div():
     return html.Div(
         [
+            # Animation Preset Dropdown
+            html.Div(
+                [
+                    html.Label("Camera Movement", className="text-sm font-medium"),
+                    dcc.Dropdown(
+                        id=C.DROPDOWN_ANIMATION_PRESET,
+                        options=[
+                            {"label": "None (Static)", "value": "none"},
+                            {"label": "Pan Left", "value": "pan_left"},
+                            {"label": "Pan Right", "value": "pan_right"},
+                            {"label": "Tilt Up", "value": "tilt_up"},
+                            {"label": "Tilt Down", "value": "tilt_down"},
+                            {"label": "Dolly In", "value": "dolly_in"},
+                            {"label": "Dolly Out", "value": "dolly_out"},
+                            {"label": "Zoom In", "value": "zoom_in"},
+                            {"label": "Zoom Out", "value": "zoom_out"},
+                            {"label": "Orbit Left", "value": "orbit_left"},
+                            {"label": "Orbit Right", "value": "orbit_right"},
+                            {"label": "Ken Burns", "value": "ken_burns"},
+                        ],
+                        value="dolly_in",
+                        className="general-dropdown",
+                    ),
+                ],
+                className="w-full mb-2",
+            ),
+            # Easing Function Dropdown
+            html.Div(
+                [
+                    html.Label("Easing", className="text-sm font-medium"),
+                    dcc.Dropdown(
+                        id=C.DROPDOWN_ANIMATION_EASING,
+                        options=[
+                            {"label": "Linear", "value": "linear"},
+                            {"label": "Ease In", "value": "ease_in"},
+                            {"label": "Ease Out", "value": "ease_out"},
+                            {"label": "Ease In-Out", "value": "ease_in_out"},
+                            {"label": "Ease In (Cubic)", "value": "ease_in_cubic"},
+                            {"label": "Ease Out (Cubic)", "value": "ease_out_cubic"},
+                            {"label": "Ease In-Out (Cubic)", "value": "ease_in_out_cubic"},
+                        ],
+                        value="ease_in_out",
+                        className="general-dropdown",
+                    ),
+                ],
+                className="w-full mb-2",
+            ),
+            # Output Format Dropdown
+            html.Div(
+                [
+                    html.Label("Output Format", className="text-sm font-medium"),
+                    dcc.Dropdown(
+                        id=C.DROPDOWN_ANIMATION_FORMAT,
+                        options=[
+                            {"label": "MP4 Video", "value": "mp4"},
+                            {"label": "GIF Animation", "value": "gif"},
+                            {"label": "PNG Sequence", "value": "png_sequence"},
+                        ],
+                        value="mp4",
+                        className="general-dropdown",
+                    ),
+                ],
+                className="w-full mb-2",
+            ),
+            # Number of Frames Slider
+            make_slider(C.SLIDER_NUM_FRAMES, "Number of Frames", 10, 300, 1, 100),
+            # FPS Slider
+            make_slider(C.SLIDER_ANIMATION_FPS, "Frames Per Second", 10, 60, 1, 30),
+            # Intensity Slider
+            html.Div(
+                [
+                    html.P("Movement Intensity"),
+                    dcc.Slider(
+                        id=C.SLIDER_ANIMATION_INTENSITY,
+                        min=0.1,
+                        max=2.0,
+                        step=0.1,
+                        value=1.0,
+                        marks={0.5: "0.5x", 1.0: "1x", 1.5: "1.5x", 2.0: "2x"},
+                        tooltip={"placement": "bottom", "always_visible": True},
+                    ),
+                ],
+                className="w-full mb-2",
+            ),
+            # Quality Slider (for MP4)
+            html.Div(
+                [
+                    html.P("Video Quality"),
+                    dcc.Slider(
+                        id=C.SLIDER_ANIMATION_QUALITY,
+                        min=15,
+                        max=35,
+                        step=1,
+                        value=23,
+                        marks={15: "High", 23: "Medium", 35: "Low"},
+                        tooltip={"placement": "bottom", "always_visible": True},
+                    ),
+                ],
+                className="w-full mb-2",
+                id=C.CTR_QUALITY_SLIDER,
+            ),
+            # Effects Section
+            html.Details(
+                [
+                    html.Summary("Post Effects", className="cursor-pointer font-medium mb-2"),
+                    html.Div(
+                        [
+                            # Vignette
+                            html.Div(
+                                [
+                                    dcc.Checklist(
+                                        id=C.CHECKLIST_VIGNETTE,
+                                        options=[{"label": " Vignette", "value": "enabled"}],
+                                        value=[],
+                                        className="mb-1",
+                                    ),
+                                    dcc.Slider(
+                                        id=C.SLIDER_VIGNETTE_INTENSITY,
+                                        min=0.1,
+                                        max=0.8,
+                                        step=0.1,
+                                        value=0.3,
+                                        marks={0.1: "Light", 0.4: "Medium", 0.8: "Strong"},
+                                        tooltip={"placement": "bottom"},
+                                    ),
+                                ],
+                                className="mb-2",
+                            ),
+                            # Chromatic Aberration
+                            html.Div(
+                                [
+                                    dcc.Checklist(
+                                        id=C.CHECKLIST_CHROMATIC,
+                                        options=[{"label": " Chromatic Aberration", "value": "enabled"}],
+                                        value=[],
+                                        className="mb-1",
+                                    ),
+                                    dcc.Slider(
+                                        id=C.SLIDER_CHROMATIC_STRENGTH,
+                                        min=1.0,
+                                        max=5.0,
+                                        step=0.5,
+                                        value=2.0,
+                                        marks={1: "Subtle", 3: "Medium", 5: "Strong"},
+                                        tooltip={"placement": "bottom"},
+                                    ),
+                                ],
+                                className="mb-2",
+                            ),
+                            # Film Grain
+                            html.Div(
+                                [
+                                    dcc.Checklist(
+                                        id=C.CHECKLIST_GRAIN,
+                                        options=[{"label": " Film Grain", "value": "enabled"}],
+                                        value=[],
+                                        className="mb-1",
+                                    ),
+                                    dcc.Slider(
+                                        id=C.SLIDER_GRAIN_INTENSITY,
+                                        min=0.02,
+                                        max=0.15,
+                                        step=0.01,
+                                        value=0.05,
+                                        marks={0.02: "Fine", 0.08: "Medium", 0.15: "Heavy"},
+                                        tooltip={"placement": "bottom"},
+                                    ),
+                                ],
+                                className="mb-2",
+                            ),
+                        ],
+                        id=C.CTR_EFFECTS_CONTAINER,
+                        className="pl-2",
+                    ),
+                ],
+                className="w-full mb-2 general-border p-2",
+            ),
+            # Export Button
             html.Button(
                 html.Div(
                     [
                         html.Label("Export Animation"),
-                        html.I(className="fa-solid fa-download pl-1"),
+                        html.I(className="fa-solid fa-video pl-1"),
                     ]
                 ),
                 id=C.BTN_EXPORT_ANIMATION,
@@ -1479,7 +1657,6 @@ def make_animation_export_div():
             dcc.Loading(
                 id=C.LOADING_ANIMATION, children=html.Div(id=C.ANIMATION_OUTPUT)
             ),
-            make_slider(C.SLIDER_NUM_FRAMES, "Number of Frames", 0, 300, 1, 100),
             dcc.Download(id=C.DOWNLOAD_ANIMATION),
         ],
         className="min-h-8 w-full flex-auto grow general-border mb-2",
